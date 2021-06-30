@@ -7,21 +7,15 @@ libvirtd： 提供使用者一個管理 VM 的服務
 virt-manager： 有點類似圖形界面，可以搭配 libvirtd 進行虛擬機器的管理。
 virsh： 終端機界面的管理指令。
 
-Run the latest version of the [Elastic stack][elk-stack] with Docker and Docker Compose.
+* KVM： 整合到 Linux 核心，是最重要的虛擬化技術，可以虛擬出 CPU 的硬體
+* qemu： 相對於 KVM，qemu 則主要在虛擬出各項週邊設備，包括磁碟、網卡、USB、顯卡、音效等
+* libvirtd： 提供使用者一個管理 VM 的服務
+* virt-manager： 有點類似圖形界面，可以搭配 libvirtd 進行虛擬機器的管理。
+* virsh： 終端機界面的管理指令。
 
-It gives you the ability to analyze any data set by using the searching/aggregation capabilities of Elasticsearch and
-the visualization power of Kibana.
-
-*:information_source: The Docker images backing this stack include [X-Pack][xpack] with [paid features][paid-features]
-enabled by default (see [How to disable paid features](#how-to-disable-paid-features) to disable them). **The [trial
-license][trial-license] is valid for 30 days**. After this license expires, you can continue using the free features
-seamlessly, without losing any data.*
-
-Based on the official Docker images from Elastic:
-
-* [Elasticsearch](https://github.com/elastic/elasticsearch/tree/master/distribution/docker)
-* [Logstash](https://github.com/elastic/logstash/tree/master/docker)
-* [Kibana](https://github.com/elastic/kibana/tree/master/src/dev/build/tasks/os_packages/docker_generator)
+```cmd
+docker create [OPTIONS] IMAGE [COMMAND] [ARG...]
+```
 
 Other available stack variants:
 
