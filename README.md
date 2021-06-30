@@ -1,8 +1,11 @@
 # VM-create
 
-[![Elastic Stack version](https://img.shields.io/badge/Elastic%20Stack-7.13.2-00bfb3?style=flat&logo=elastic-stack)](https://www.elastic.co/blog/category/releases)
-[![Build Status](https://github.com/deviantony/docker-elk/workflows/CI/badge.svg?branch=main)](https://github.com/deviantony/docker-elk/actions?query=workflow%3ACI+branch%3Amain)
-[![Join the chat at https://gitter.im/deviantony/docker-elk](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/deviantony/docker-elk?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+經常使用到的軟體：
+KVM： 整合到 Linux 核心，是最重要的虛擬化技術，可以虛擬出 CPU 的硬體
+qemu： 相對於 KVM，qemu 則主要在虛擬出各項週邊設備，包括磁碟、網卡、USB、顯卡、音效等
+libvirtd： 提供使用者一個管理 VM 的服務
+virt-manager： 有點類似圖形界面，可以搭配 libvirtd 進行虛擬機器的管理。
+virsh： 終端機界面的管理指令。
 
 Run the latest version of the [Elastic stack][elk-stack] with Docker and Docker Compose.
 
