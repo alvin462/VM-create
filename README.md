@@ -1,23 +1,31 @@
 # VM-create
+常見的虛擬化術語:
+* Host： 就是虛擬機器所在的那部實體主機
+* VM： 就是虛擬機器硬體的意思
+* Guest OS： 在 VM 上面所安裝的獨立的作業系統
+* Client： 就是你的工作機，跟上述的環境無關！舉例來說，你目前在使用的這部 Windows 工作機，可以透過 remote-viewer 連線到 VM 上，那麼這個系統就可以稱為 client 端的系統。
 
 經常使用到的軟體：
-KVM： 整合到 Linux 核心，是最重要的虛擬化技術，可以虛擬出 CPU 的硬體
-qemu： 相對於 KVM，qemu 則主要在虛擬出各項週邊設備，包括磁碟、網卡、USB、顯卡、音效等
-libvirtd： 提供使用者一個管理 VM 的服務
-virt-manager： 有點類似圖形界面，可以搭配 libvirtd 進行虛擬機器的管理。
-virsh： 終端機界面的管理指令。
-
 * KVM： 整合到 Linux 核心，是最重要的虛擬化技術，可以虛擬出 CPU 的硬體
 * qemu： 相對於 KVM，qemu 則主要在虛擬出各項週邊設備，包括磁碟、網卡、USB、顯卡、音效等
 * libvirtd： 提供使用者一個管理 VM 的服務
 * virt-manager： 有點類似圖形界面，可以搭配 libvirtd 進行虛擬機器的管理。
 * virsh： 終端機界面的管理指令。
 
-## 安裝
+## 安裝及啟動
 ```cmd
 yum install qemu-kvm qemu-img virt-manager libvirt libvirt-client virt-install virt-viewer bridge-utils
-```
+systemctl start libvirtd
+systemctl enable libvirtd
+systemctl status libvirtd
+● libvirtd.service - Virtualization daemon
+   Loaded: loaded (/usr/lib/systemd/system/libvirtd.service; enabled; vendor pr>
+   Active: active (running) since Thu 2021-07-01 02:17:48 CST; 1s ago
+     Docs: man:libvirtd(8)
+           https://libvirt.org
+ Main PID: 83842 (libvirtd)
 
+```
 Other available stack variants:
 
 * [`tls`](https://github.com/deviantony/docker-elk/tree/tls): TLS encryption enabled in Elasticsearch.
