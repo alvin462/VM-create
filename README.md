@@ -15,6 +15,7 @@
 ## 安裝及啟動
 ```cmd
 yum install qemu-kvm qemu-img virt-manager libvirt libvirt-client virt-install virt-viewer bridge-utils
+
 systemctl start libvirtd
 systemctl enable libvirtd
 systemctl status libvirtd
@@ -88,339 +89,330 @@ vim /etc/libvirt/qemu/networks/default.xml
   </ip>
 </network>
 ```
-由於
-*:information_source: Especially on Linux, make sure your user has the [required permissions][linux-postinstall] to
-interact with the Docker daemon.*
+之後我們會自行分配網路，不需要用到libvirtd所提供的DHCP，之後自行建立網路橋接器。
+那目前得先把VM(domain)、網路介面(netdomain)關閉，這部分就能使用libvirtd所提供的指令virsh。
 
-By default, the stack exposes the following ports:
 
-* 5044: Logstash Beats input
-* 5000: Logstash TCP input
-* 9600: Logstash monitoring API
-* 9200: Elasticsearch HTTP
-* 9300: Elasticsearch TCP transport
-* 5601: Kibana
+```
+virsh list --all
+#如果沒有機器啟動，就不需要進行關閉的動作
 
-**:warning: Elasticsearch's [bootstrap checks][booststap-checks] were purposely disabled to facilitate the setup of the
-Elastic stack in development environments. For production setups, we recommend users to set up their host according to
-the instructions from the Elasticsearch documentation: [Important System Configuration][es-sys-config].**
+#正常關閉
+virsh shutdown 名稱
+#強制關閉
+virsh destroy 名稱
+#取消定義
+virsh undefine 名稱
+```
+```
+virsh net-list --all
 
-### SELinux
+ 名稱               狀態     自動啟動  Persistent
+----------------------------------------------------------
+ default              啟用     yes           yes
 
-On distributions which have SELinux enabled out-of-the-box you will need to either re-context the files or set SELinux
-into Permissive mode in order for docker-elk to start properly. For example on Redhat and CentOS, the following will
-apply the proper context:
+#關閉網路
+virsh net-destroy 名稱
+#取消網路定義
+virsh net-undefine 名稱
 
-```console
-$ chcon -R system_u:object_r:admin_home_t:s0 docker-elk/
+#再觀察一次
+virsh net-list --all
+
+ 名稱               狀態     自動啟動  Persistent
+----------------------------------------------------------
+```
+---
+##實作
+
+```
+#將 /etc/libvirt/qemu/networks/default.xml 備份到 /root/virtual/ 目錄內
+mkdir /root/virtual
+cp -a /etc/libvirt/qemu/networks/default.xml /root/virtual
+
+#列出目前所有的虛擬網路橋接器
+virsh list --all
+virsh net-list --all
+
+#關閉網路
+virsh net-destroy 名稱(default)
+
+#完整刪除，及需要取消網路定義
+virsh net-undefine 名稱(default)
+
+#查詢監聽port，是否已經刪除
+netstat -tunlp | grep 53
+
 ```
 
-### Docker for Desktop
+##手動建立NAT方式的橋接器：
+你的虛擬機器想要連線到 Internet 有兩種方式：
+* 透過 Host 的 NAT 轉遞，取得 private IP 即可
+* 直接透過 bridge 的功能，直接設定對外的 IP 取得方式即可。
 
-#### Windows
+qemu 也提供了兩種基本的橋接器給我們使用的:
+* 透過 NAT，例如剛剛的 default 網路界面
+* 透過直接 forward 到外部實體網卡上！就是直接 bridge 功能！
 
-Ensure the [Shared Drives][win-shareddrives] feature is enabled for the `C:` drive.
+透過 NAT 的橋接方式
+* 綁訂到 Server 的 IP 假設為 192.168.10.254/24 這一個
+* 假設有啟動 DHCP 服務，同時提供的動態 IP 範圍在 192.168.10.1~192.168.10.100
+* 假設 Host 看到的網路界面名稱就稱為 virbr1 好了。
+```
+vim /root/virtual/qnet.xml
 
-#### macOS
+<network>
+    <name>qnet</name>
+    <forward mode='nat'/>
+    <bridge name='virbr1' stp='on' delay='0'/>
+    <mac address='52:54:00:66:ff:0c'/>
+    <ip address='192.168.10.254' netmask='255.255.255.0'>
+        <dhcp>
+            <range start='192.168.10.1' end='192.168.10.100'/>
+        </dhcp>
+    </ip>
+</network>
+```
+##手動建立橋接器，直接連結到實體網卡上面：
+```
+vim /root/virtual/qforward.xml
 
-The default Docker for Mac configuration allows mounting files from `/Users/`, `/Volumes/`, `/private/`, and `/tmp`
-exclusively. Make sure the repository is cloned in one of those locations or follow the instructions from the
-[documentation][mac-mounts] to add more locations.
+<network>
+  <name>qforward</name>
+  <forward dev='eno1' mode='bridge'>
+    <interface dev='eno1'/>
+  </forward>
+</network>
 
-## Usage
+#查看狀態
+virsh net-create qforward.xml
+ virsh net-list
+ 名稱               狀態     自動啟動  Persistent
+----------------------------------------------------------
+ qforward             啟用     no            no
+ qnet                 啟用     no            no
+```
+---
+##設計虛擬磁碟
+* 虛擬磁碟可以是實體磁碟、可以是檔案、可以是 LVM 裝置等等
+* 虛擬磁碟可以使用 qemu-img 來建置
+* 常見的虛擬磁碟格式，主要為 qcow2 與 raw ，其餘不要考慮
+* raw 格式最快，但是得先預留出磁碟容量，因此不建議
+* qcow2 還在持續發展中，速度與 raw 已經差不多，而且檔案系統用多少，算多少。
 
-### Version selection
+```
+基本qemu指令查詢
+qemu-img --help
 
-This repository tries to stay aligned with the latest version of the Elastic stack. The `main` branch tracks the current
-major version (7.x).
 
-To use a different version of the core Elastic components, simply change the version number inside the `.env` file. If
-you are upgrading an existing stack, please carefully read the note in the next section.
+#qemu-img製作一個40G的虛擬磁碟
+cd /vmdisk
+qemu-img create -f qcow2 /vmdisk/centos8.ver10.img 40G
 
-**:warning: Always pay attention to the [official upgrade instructions][upgrade] for each individual component before
-performing a stack upgrade.**
+qemu info centos8.ver10.img
 
-Older major versions are also supported on separate branches:
+image: centos8.img
+file format: qcow2
+virtual size: 40 GiB (42949672960 bytes)
+disk size: 4.64 GiB
+cluster_size: 65536
+Format specific information:
+    compat: 1.1
+    lazy refcounts: false
+    refcount bits: 16
+    corrupt: false
 
-* [`release-6.x`](https://github.com/deviantony/docker-elk/tree/release-6.x): 6.x series
-* [`release-5.x`](https://github.com/deviantony/docker-elk/tree/release-5.x): 5.x series (End-Of-Life)
+```
+---
+##下載所需vm系統
 
-### Bringing up the stack
+自行查找所需iso
+---
 
-Clone this repository onto the Docker host that will run the stack, then start services locally using Docker Compose:
+##建立XML檔案
+```
+virt-install --name centos8.v1 \
+	--cpu host --vcpus 4 --memory 4096 --memballoon virtio \
+	--clock offset=utc \
+	--controller virtio-scsi \
+	--disk /vmdisk/centos8.ver10.img,cache=writeback,io=threads,device=disk,bus=virtio \
+	--network network=qnet,model=virtio \
+	--graphics spice,port=5910,listen=0.0.0.0,password=centos8 \
+	--cdrom /vmdisk/iso/CentOS-8.3.2011-x86_64-dvd1.iso \
+	--video qxl \
+	--dry-run --print-xml \
+    > /vmdisk/centos8.ver10.xml
+```
+##修改XML檔
+* 把74行以後的都刪除，保留1~73行
+* 第23行加入
+```
+<on_poweroff>destroy</on_poweroff>
+<on_reboot>restart</on_reboot>
+<on_crash>restart</on_crash>
+```
+* 第44行刪除或註解<controller type="virtio-scsi" index="0"/>
+* 第56行改成<source network="qnet"/>
+* 65行
+```
+<graphics type="spice" port="5911" tlsPort="-1" listen="0.0.0.0" passwd="centos7">
+將其中的 tlsPort="-1"刪除(沒有刪除會強制加密)
+```
+---
+XML
 
-```console
-$ docker-compose up
+```
+<domain type="kvm">
+  <name>centos8.v1</name>
+  <!--uuid>42560c85-a72d-4174-889f-2aa35d65da07</uuid-->
+  <memory>4194304</memory>
+  <currentMemory>4194304</currentMemory>
+  <vcpu>4</vcpu>
+  <os>
+    <type arch="x86_64" machine="pc-i440fx-rhel7.6.0">hvm</type>
+    <boot dev="cdrom"/>
+    <boot dev="hd"/>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+    <vmport state="off"/>
+  </features>
+  <cpu mode="host-model"/>
+  <clock offset="utc">
+    <timer name="rtc" tickpolicy="catchup"/>
+    <timer name="pit" tickpolicy="delay"/>
+    <timer name="hpet" present="no"/>
+  </clock>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>restart</on_crash>
+  <pm>
+    <suspend-to-mem enabled="no"/>
+    <suspend-to-disk enabled="no"/>
+  </pm>
+  <devices>
+    <emulator>/usr/libexec/qemu-kvm</emulator>
+    <disk type="file" device="disk">
+      <driver name="qemu" type="qcow2" cache="writeback" io="threads"/>
+      <source file="/vmdisk/centos8.ver10.img"/>
+      <target dev="vda" bus="virtio"/>
+    </disk>
+    <disk type="file" device="cdrom">
+      <driver name="qemu" type="raw"/>
+      <source file="/vmdisk/iso/CentOS-8.1.1911-x86_64-dvd1.iso"/>
+      <target dev="hda" bus="ide"/>
+      <readonly/>
+    </disk>
+    <!--controller type="virtio-scsi" index="0"/-->
+    <controller type="usb" index="0" model="ich9-ehci1"/>
+    <controller type="usb" index="0" model="ich9-uhci1">
+      <master startport="0"/>
+    </controller>
+    <controller type="usb" index="0" model="ich9-uhci2">
+      <master startport="2"/>
+    </controller>
+    <controller type="usb" index="0" model="ich9-uhci3">
+      <master startport="4"/>
+    </controller>
+    <interface type="network">
+      <source network="qnet"/>
+      <mac address="52:54:00:18:19:84"/>
+      <model type="virtio"/>
+    </interface>
+    <console type="pty"/>
+    <channel type="spicevmc">
+      <target type="virtio" name="com.redhat.spice.0"/>
+    </channel>
+    <input type="tablet" bus="usb"/>
+    <graphics type="spice" port="5910" listen="0.0.0.0" passwd="centos8">
+      <image compression="off"/>
+    </graphics>
+    <sound model="ich6"/>
+    <video>
+      <model type="qxl"/>
+    </video>
+    <redirdev bus="usb" type="spicevmc"/>
+    <redirdev bus="usb" type="spicevmc"/>
+    <memballoon model="virtio"/>
+  </devices>
+</domain>
+```
+---
+##啟動虛擬機
+```
+virsh create /vmdisk/centos8.ver10.xml
+```
+---
+##觀察虛擬機
+
+```
+virsh list
+
+ Id    名稱                         狀態
+----------------------------------------------------
+ 4     centos8.v01                    執行中
+```
+##放行iptables
+```
+vim /root/firewall.sh
+iptables -A INPUT -s IP -p tcp --dport 5910 -j ACCEPT
 ```
 
-You can also run all services in the background (detached mode) by adding the `-d` flag to the above command.
+##Remote-Viewer
+spice://YourIP:Port
 
-**:warning: You must rebuild the stack images with `docker-compose build` whenever you switch branch or update the
-version of an already existing stack.**
-
-If you are starting the stack for the very first time, please read the section below attentively.
-
-### Cleanup
-
-Elasticsearch data is persisted inside a volume by default.
-
-In order to entirely shutdown the stack and remove all persisted data, use the following Docker Compose command:
-
-```console
-$ docker-compose down -v
+##效能調校
+ CPU 核心與執行緒的對應:
+ 每台實體機不同
 ```
+cpupower monitor
 
-## Initial setup
+ CPU| C3   | C6   | PC3  | PC6   || C7   | PC2  | PC7   || C0   | Cx   | Freq  || POLL | C1   | C1E  | C3   | C6
+   0|  0.20| 97.18|  0.13| 89.54||  0.00|  1.02|  0.00||  0.33| 99.67|  3014||  0.00|  0.00|  0.02|  0.00| 99.64
+   4|  0.20| 97.17|  0.13| 89.54||  0.00|  1.02|  0.00||  0.67| 99.33|  1834||  0.00|  0.00|  0.07|  0.22| 99.04
+   1|  0.02| 98.72|  0.13| 89.54||  0.00|  1.02|  0.00||  0.20| 99.80|  2374||  0.00|  0.00|  0.04|  0.00| 99.74
+   5|  0.02| 98.72|  0.13| 89.54||  0.00|  1.02|  0.00||  0.22| 99.78|  2299||  0.00|  0.00|  0.05|  0.00| 99.72
+   2|  0.18| 95.78|  0.13| 89.54||  0.00|  1.02|  0.00||  2.85| 97.15|  3595||  0.00|  0.00|  0.01|  0.00| 97.12
+   6|  0.18| 95.78|  0.13| 89.54||  0.00|  1.02|  0.00||  0.31| 99.69|  2220||  0.00|  0.32|  0.10|  0.20| 99.07
+   3|  0.03| 97.93|  0.13| 89.54||  0.00|  1.02|  0.00||  0.49| 99.51|  1890||  0.00|  0.00|  0.02|  0.00| 99.48
+   7|  0.03| 97.93|  0.13| 89.54||  0.00|  1.02|  0.00||  0.30| 99.70|  2009||  0.00|  0.00|  0.01|  0.00| 99.68
 
-### Setting up user authentication
-
-*:information_source: Refer to [How to disable paid features](#how-to-disable-paid-features) to disable authentication.*
-
-The stack is pre-configured with the following **privileged** bootstrap user:
-
-* user: *elastic*
-* password: *changeme*
-
-Although all stack components work out-of-the-box with this user, we strongly recommend using the unprivileged [built-in
-users][builtin-users] instead for increased security.
-
-1. Initialize passwords for built-in users
-
-    ```console
-    $ docker-compose exec -T elasticsearch bin/elasticsearch-setup-passwords auto --batch
-    ```
-
-    Passwords for all 6 built-in users will be randomly generated. Take note of them.
-
-1. Unset the bootstrap password (_optional_)
-
-    Remove the `ELASTIC_PASSWORD` environment variable from the `elasticsearch` service inside the Compose file
-    (`docker-compose.yml`). It is only used to initialize the keystore during the initial startup of Elasticsearch.
-
-1. Replace usernames and passwords in configuration files
-
-    Use the `kibana_system` user (`kibana` for releases <7.8.0) inside the Kibana configuration file
-    (`kibana/config/kibana.yml`) and the `logstash_system` user inside the Logstash configuration file
-    (`logstash/config/logstash.yml`) in place of the existing `elastic` user.
-
-    Replace the password for the `elastic` user inside the Logstash pipeline file (`logstash/pipeline/logstash.conf`).
-
-    *:information_source: Do not use the `logstash_system` user inside the Logstash **pipeline** file, it does not have
-    sufficient permissions to create indices. Follow the instructions at [Configuring Security in Logstash][ls-security]
-    to create a user with suitable roles.*
-
-    See also the [Configuration](#configuration) section below.
-
-1. Restart Kibana and Logstash to apply changes
-
-    ```console
-    $ docker-compose restart kibana logstash
-    ```
-
-    *:information_source: Learn more about the security of the Elastic stack at [Tutorial: Getting started with
-    security][sec-tutorial].*
-
-### Injecting data
-
-Give Kibana about a minute to initialize, then access the Kibana web UI by opening <http://localhost:5601> in a web
-browser and use the following credentials to log in:
-
-* user: *elastic*
-* password: *\<your generated elastic password>*
-
-Now that the stack is running, you can go ahead and inject some log entries. The shipped Logstash configuration allows
-you to send content via TCP:
-
-```console
-# Using BSD netcat (Debian, Ubuntu, MacOS system, ...)
-$ cat /path/to/logfile.log | nc -q0 localhost 5000
 ```
-
-```console
-# Using GNU netcat (CentOS, Fedora, MacOS Homebrew, ...)
-$ cat /path/to/logfile.log | nc -c localhost 5000
+##所以修改XML
+原本的:
 ```
-
-You can also load the sample data provided by your Kibana installation.
-
-### Default Kibana index pattern creation
-
-When Kibana launches for the first time, it is not configured with any index pattern.
-
-#### Via the Kibana web UI
-
-*:information_source: You need to inject data into Logstash before being able to configure a Logstash index pattern via
-the Kibana web UI.*
-
-Navigate to the _Discover_ view of Kibana from the left sidebar. You will be prompted to create an index pattern. Enter
-`logstash-*` to match Logstash indices then, on the next page, select `@timestamp` as the time filter field. Finally,
-click _Create index pattern_ and return to the _Discover_ view to inspect your log entries.
-
-Refer to [Connect Kibana with Elasticsearch][connect-kibana] and [Creating an index pattern][index-pattern] for detailed
-instructions about the index pattern configuration.
-
-#### On the command line
-
-Create an index pattern via the Kibana API:
-
-```console
-$ curl -XPOST -D- 'http://localhost:5601/api/saved_objects/index-pattern' \
-    -H 'Content-Type: application/json' \
-    -H 'kbn-version: 7.13.2' \
-    -u elastic:<your generated elastic password> \
-    -d '{"attributes":{"title":"logstash-*","timeFieldName":"@timestamp"}}'
+<vcpu>4</vcpu>
+   <os>
+   <type arch="x86_64" machine="pc-i440fx-rhel7.6.0">hvm</type>
+   <boot dev="cdrom"/>
+   <boot dev="hd"/>
+   </os>
+   <features>
+   <acpi/>
+   <apic/>
+   <vmport cccstate="off"/>
+   </features>
+   <cpu mode="host-model"/>
 ```
-
-The created pattern will automatically be marked as the default index pattern as soon as the Kibana UI is opened for the
-first time.
-
-## Configuration
-
-*:information_source: Configuration is not dynamically reloaded, you will need to restart individual components after
-any configuration change.*
-
-### How to configure Elasticsearch
-
-The Elasticsearch configuration is stored in [`elasticsearch/config/elasticsearch.yml`][config-es].
-
-You can also specify the options you want to override by setting environment variables inside the Compose file:
-
-```yml
-elasticsearch:
-
-  environment:
-    network.host: _non_loopback_
-
-```console
-$ curl -XPOST -D- 'http://localhost:9200/_security/user/elastic/_password' \
-    -H 'Content-Type: application/json' \
-    -u elastic:<your current elastic password> \
-    -d '{"password" : "<your new password>"}'
+建議修改:
 ```
+<vcpu placement='static'>4</vcpu>
+<cputune>
+    <!--分別對應在不同的運算核心上面，使用 4~7 或 0~3 均可！ -->
+    <vcpupin vcpu='0' cpuset='4'/>   
+    <vcpupin vcpu='1' cpuset='5'/>
+    <vcpupin vcpu='2' cpuset='6'/>
+    <vcpupin vcpu='3' cpuset='7'/>
+</cputune>
 
-## Extensibility
-
-### How to add plugins
-
-To add plugins to any ELK component you have to:
-
-1. Add a `RUN` statement to the corresponding `Dockerfile` (eg. `RUN logstash-plugin install logstash-filter-json`)
-1. Add the associated plugin code configuration to the service configuration (eg. Logstash input/output)
-1. Rebuild the images using the `docker-compose build` command
-
-### How to enable the provided extensions
-
-A few extensions are available inside the [`extensions`](extensions) directory. These extensions provide features which
-are not part of the standard Elastic stack, but can be used to enrich it with extra integrations.
-
-The documentation for these extensions is provided inside each individual subdirectory, on a per-extension basis. Some
-of them require manual changes to the default ELK configuration.
-
-## JVM tuning
-
-### How to specify the amount of memory used by a service
-
-By default, both Elasticsearch and Logstash start with [1/4 of the total host
-memory](https://docs.oracle.com/javase/8/docs/technotes/guides/vm/gctuning/parallel.html#default_heap_size) allocated to
-the JVM Heap Size.
-
-The startup scripts for Elasticsearch and Logstash can append extra JVM options from the value of an environment
-variable, allowing the user to adjust the amount of memory that can be used by each component:
-
-| Service       | Environment variable |
-|---------------|----------------------|
-| Elasticsearch | ES_JAVA_OPTS         |
-| Logstash      | LS_JAVA_OPTS         |
-
-To accomodate environments where memory is scarce (Docker for Mac has only 2 GB available by default), the Heap Size
-allocation is capped by default to 256MB per service in the `docker-compose.yml` file. If you want to override the
-default JVM configuration, edit the matching environment variable(s) in the `docker-compose.yml` file.
-
-For example, to increase the maximum JVM Heap Size for Logstash:
-
-```yml
-logstash:
-
-  environment:
-    LS_JAVA_OPTS: -Xmx1g -Xms1g
+<!--將指令 bypass 給 host CPU！ -->
+<cpu mode='host-passthrough'>                         
+    <arch>x86_64</arch>
+    <model>SandyBridge-IBRS</model>
+    <vendor>Intel</vendor>
+    <microcode version='47'/>
+   <!--使用與 host 相同的設計，只是 threads 設計為 1 個-->
+    <topology sockets='1' cores='4' threads='1'/> 
+</cpu>
 ```
-
-### How to enable a remote JMX connection to a service
-
-As for the Java Heap memory (see above), you can specify JVM options to enable JMX and map the JMX port on the Docker
-host.
-
-Update the `{ES,LS}_JAVA_OPTS` environment variable with the following content (I've mapped the JMX service on the port
-18080, you can change that). Do not forget to update the `-Djava.rmi.server.hostname` option with the IP address of your
-Docker host (replace **DOCKER_HOST_IP**):
-
-```yml
-logstash:
-
-  environment:
-    LS_JAVA_OPTS: -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=18080 -Dcom.sun.management.jmxremote.rmi.port=18080 -Djava.rmi.server.hostname=DOCKER_HOST_IP -Dcom.sun.management.jmxremote.local.only=false
-```
-
-## Going further
-
-### Plugins and integrations
-
-See the following Wiki pages:
-
-* [External applications](https://github.com/deviantony/docker-elk/wiki/External-applications)
-* [Popular integrations](https://github.com/deviantony/docker-elk/wiki/Popular-integrations)
-
-### Swarm mode
-
-Experimental support for Docker [Swarm mode][swarm-mode] is provided in the form of a `docker-stack.yml` file, which can
-be deployed in an existing Swarm cluster using the following command:
-
-```console
-$ docker stack deploy -c docker-stack.yml elk
-```
-
-If all components get deployed without any error, the following command will show 3 running services:
-
-```console
-$ docker stack services elk
-```
-
-*:information_source: To scale Elasticsearch in Swarm mode, configure seed hosts with the DNS name `tasks.elasticsearch`
-instead of `elasticsearch`.*
-
-[elk-stack]: https://www.elastic.co/what-is/elk-stack
-[xpack]: https://www.elastic.co/what-is/open-x-pack
-[paid-features]: https://www.elastic.co/subscriptions
-[trial-license]: https://www.elastic.co/guide/en/elasticsearch/reference/current/license-settings.html
-
-[elastdocker]: https://github.com/sherifabdlnaby/elastdocker
-
-[linux-postinstall]: https://docs.docker.com/install/linux/linux-postinstall/
-
-[booststap-checks]: https://www.elastic.co/guide/en/elasticsearch/reference/current/bootstrap-checks.html
-[es-sys-config]: https://www.elastic.co/guide/en/elasticsearch/reference/current/system-config.html
-
-[win-shareddrives]: https://docs.docker.com/docker-for-windows/#shared-drives
-[mac-mounts]: https://docs.docker.com/docker-for-mac/osxfs/
-
-[builtin-users]: https://www.elastic.co/guide/en/elasticsearch/reference/current/built-in-users.html
-[ls-security]: https://www.elastic.co/guide/en/logstash/current/ls-security.html
-[sec-tutorial]: https://www.elastic.co/guide/en/elasticsearch/reference/current/security-getting-started.html
-
-[connect-kibana]: https://www.elastic.co/guide/en/kibana/current/connect-to-elasticsearch.html
-[index-pattern]: https://www.elastic.co/guide/en/kibana/current/index-patterns.html
-
-[config-es]: ./elasticsearch/config/elasticsearch.yml
-[config-kbn]: ./kibana/config/kibana.yml
-[config-ls]: ./logstash/config/logstash.yml
-
-[es-docker]: https://www.elastic.co/guide/en/elasticsearch/reference/current/docker.html
-[kbn-docker]: https://www.elastic.co/guide/en/kibana/current/docker.html
-[ls-docker]: https://www.elastic.co/guide/en/logstash/current/docker-config.html
-
-[log4j-props]: https://github.com/elastic/logstash/tree/7.6/docker/data/logstash/config
-[esuser]: https://github.com/elastic/elasticsearch/blob/7.6/distribution/docker/src/docker/Dockerfile#L23-L24
-
-[upgrade]: https://www.elastic.co/guide/en/elasticsearch/reference/current/setup-upgrade.html
-
-[swarm-mode]: https://docs.docker.com/engine/swarm/
