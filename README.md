@@ -26,65 +26,69 @@ systemctl status libvirtd
  Main PID: 83842 (libvirtd)
 
 ```
-Other available stack variants:
+---
 
-* [`tls`](https://github.com/deviantony/docker-elk/tree/tls): TLS encryption enabled in Elasticsearch.
-* [`searchguard`](https://github.com/deviantony/docker-elk/tree/searchguard): Search Guard support
+## 觀察目前啟動的VM
+
+```
+virsh list [--all]
+ Id    名稱                         狀態
+----------------------------------------------------
+
+virsh net-list [--all]
+ 名稱               狀態     自動啟動  Persistent
+----------------------------------------------------------
+ default              啟用     yes           yes
+
+```
+預設不會有 VM ，而預設會啟用一個名為『 default 』的橋接器！提供一個 VM 內部可以連線的網路狀態！
 
 ---
 
-## Philosophy
+## 關閉與取消定義的虛擬機器、橋接器等
+在確認了有 default 這個橋接器，觀察Port狀態
+```
+netstat -tulnp
+Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name
+tcp        0      0 192.168.122.1:53        0.0.0.0:*               LISTEN      5250/dnsmasq
+udp        0      0 192.168.122.1:53        0.0.0.0:*                           5250/dnsmasq
+udp        0      0 0.0.0.0:67              0.0.0.0:*                           5250/dnsmasq
 
-We aim at providing the simplest possible entry into the Elastic stack for anybody who feels like experimenting with
-this powerful combo of technologies. This project's default configuration is purposely minimal and unopinionated. It
-does not rely on any external dependency or custom automation to get things up and running.
-
-Instead, we believe in good documentation so that you can use this repository as a template, tweak it, and make it _your
-own_. [sherifabdlnaby/elastdocker][elastdocker] is one example among others of project that builds upon this idea.
+```
+* Port 53: 提供 VM 向外部查詢 DNS
+* port 67: 是提供VMDHCP自動取得網路參數
 
 ---
+ 
+## 觀察目前網路卡資訊
+```
+ip link show
+virbr0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500....
+virbr0-nic: <BROADCAST,MULTICAST> mtu 1500....
+```
+發現出現了virbr0、virbr0-nic兩張介面卡。
+* virbr0：會自動加入一個192.168.122.X/24的網段給虛擬機器使用，並且使用的是 NAT 的機制，因此使用這個 virbr0 橋接器連結的系統， 就可以自動的透過你的 host 上網了。
 
-## Contents
+觀察設定檔察看預設網路設定值
+由於網路轉遞是 NAT 技術，而 DHCP 的範圍則是 192.168.122.2 ~ 192.168.122.254 之間！ 至於 DHCP server 的 IP 則是 192.168.122.1 喔
 
-1. [Requirements](#requirements)
-   * [Host setup](#host-setup)
-   * [SELinux](#selinux)
-   * [Docker for Desktop](#docker-for-desktop)
-     * [Windows](#windows)
-     * [macOS](#macos)
-1. [Usage](#usage)
-   * [Version selection](#version-selection)
-   * [Bringing up the stack](#bringing-up-the-stack)
-   * [Cleanup](#cleanup)
-   * [Initial setup](#initial-setup)
-     * [Setting up user authentication](#setting-up-user-authentication)
-     * [Injecting data](#injecting-data)
-     * [Default Kibana index pattern creation](#default-kibana-index-pattern-creation)
-1. [Configuration](#configuration)
-   * [How to configure Elasticsearch](#how-to-configure-elasticsearch)
-   * [How to configure Kibana](#how-to-configure-kibana)
-   * [How to configure Logstash](#how-to-configure-logstash)
-   * [How to disable paid features](#how-to-disable-paid-features)
-   * [How to scale out the Elasticsearch cluster](#how-to-scale-out-the-elasticsearch-cluster)
-   * [How to reset a password programmatically](#how-to-reset-a-password-programmatically)
-1. [Extensibility](#extensibility)
-   * [How to add plugins](#how-to-add-plugins)
-   * [How to enable the provided extensions](#how-to-enable-the-provided-extensions)
-1. [JVM tuning](#jvm-tuning)
-   * [How to specify the amount of memory used by a service](#how-to-specify-the-amount-of-memory-used-by-a-service)
-   * [How to enable a remote JMX connection to a service](#how-to-enable-a-remote-jmx-connection-to-a-service)
-1. [Going further](#going-further)
-   * [Plugins and integrations](#plugins-and-integrations)
-   * [Swarm mode](#swarm-mode)
-
-## Requirements
-
-### Host setup
-
-* [Docker Engine](https://docs.docker.com/install/) version **17.05** or newer
-* [Docker Compose](https://docs.docker.com/compose/install/) version **1.20.0** or newer
-* 1.5 GB of RAM
-
+```
+vim /etc/libvirt/qemu/networks/default.xml
+<network>
+  <name>default</name>
+  <uuid>d77a80ea-c1cf-44d1-9157-a71ce0f46b0a</uuid>
+  <forward mode='nat'/>
+  <bridge name='virbr0' stp='on' delay='0'/>
+  <mac address='52:54:00:60:8e:8f'/>
+  <ip address='192.168.122.1' netmask='255.255.255.0'>
+    <dhcp>
+      <range start='192.168.122.2' end='192.168.122.254'/>
+    </dhcp>
+  </ip>
+</network>
+```
+由於
 *:information_source: Especially on Linux, make sure your user has the [required permissions][linux-postinstall] to
 interact with the Docker daemon.*
 
@@ -286,46 +290,6 @@ elasticsearch:
 
   environment:
     network.host: _non_loopback_
-    cluster.name: my-cluster
-```
-
-Please refer to the following documentation page for more details about how to configure Elasticsearch inside Docker
-containers: [Install Elasticsearch with Docker][es-docker].
-
-### How to configure Kibana
-
-The Kibana default configuration is stored in [`kibana/config/kibana.yml`][config-kbn].
-
-It is also possible to map the entire `config` directory instead of a single file.
-
-Please refer to the following documentation page for more details about how to configure Kibana inside Docker
-containers: [Install Kibana with Docker][kbn-docker].
-
-### How to configure Logstash
-
-The Logstash configuration is stored in [`logstash/config/logstash.yml`][config-ls].
-
-It is also possible to map the entire `config` directory instead of a single file, however you must be aware that
-Logstash will be expecting a [`log4j2.properties`][log4j-props] file for its own logging.
-
-Please refer to the following documentation page for more details about how to configure Logstash inside Docker
-containers: [Configuring Logstash for Docker][ls-docker].
-
-### How to disable paid features
-
-Switch the value of Elasticsearch's `xpack.license.self_generated.type` option from `trial` to `basic` (see [License
-settings][trial-license]).
-
-### How to scale out the Elasticsearch cluster
-
-Follow the instructions from the Wiki: [Scaling out Elasticsearch](https://github.com/deviantony/docker-elk/wiki/Elasticsearch-cluster)
-
-### How to reset a password programmatically
-
-If for any reason your are unable to use Kibana to change the password of your users (including [built-in
-users][builtin-users]), you can use the Elasticsearch API instead and achieve the same result.
-
-In the example below, we reset the password of the `elastic` user (notice "/user/elastic" in the URL):
 
 ```console
 $ curl -XPOST -D- 'http://localhost:9200/_security/user/elastic/_password' \
