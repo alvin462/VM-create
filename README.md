@@ -251,8 +251,10 @@ virt-install --name centos8.v1 \
 <on_reboot>restart</on_reboot>
 <on_crash>restart</on_crash>
 ```
-* 第44行刪除或註解<controller type="virtio-scsi" index="0"/>
-* 第56行改成<source network="qnet"/>
+* 第44行刪除或註解
+```<controller type="virtio-scsi" index="0"/>```
+* 第56行改成
+```source network="qnet"/>```
 * 65行
 ```
 <graphics type="spice" port="5911" tlsPort="-1" listen="0.0.0.0" passwd="centos7">
@@ -380,7 +382,7 @@ cpupower monitor
 
 ```
 ##所以修改XML
-原本的:
+* 原本的:
 ```
 <vcpu>4</vcpu>
    <os>
@@ -395,7 +397,7 @@ cpupower monitor
    </features>
    <cpu mode="host-model"/>
 ```
-建議修改:
+* 建議修改:
 ```
 <vcpu placement='static'>4</vcpu>
 <cputune>
