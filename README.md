@@ -13,8 +13,9 @@ virsh： 終端機界面的管理指令。
 * virt-manager： 有點類似圖形界面，可以搭配 libvirtd 進行虛擬機器的管理。
 * virsh： 終端機界面的管理指令。
 
+## 安裝
 ```cmd
-docker create [OPTIONS] IMAGE [COMMAND] [ARG...]
+yum install qemu-kvm qemu-img virt-manager libvirt libvirt-client virt-install virt-viewer bridge-utils
 ```
 
 Other available stack variants:
